@@ -49,6 +49,19 @@ An agentic browser automation tool that fills job application forms across **Wor
   - `--report` CLI exits 0 if `ft_win_pct ≥ 70%` (CI-gate ready), exits 1 otherwise
   - CLI: `python -m pipeline.shadow_eval --report --db runs.db`
 - **`tests/test_shadow_eval.py`** — 31-test pytest suite covering model ID reading, prediction (DB insert, API args, whitespace stripping), win-rate stats, promote threshold, and CLI exit codes
+- **`field_mapper.py`** — maps form fields to values using the active model
+  - Reads `.ft_model_id` on startup; uses fine-tuned model (`model_source="ft"`) if present, base model otherwise (`model_source="base"`)
+  - `--force-base` flag overrides to base model for debugging
+  - Fires `shadow_predict()` in a background thread (fire-and-forget) when the ft model is active, so shadow eval accumulates data without blocking fills
+  - Reads `OPENAI_API_KEY` from `.env` via `python-dotenv`
+- **`tests/test_field_mapper.py`** — 17-test pytest suite covering model selection, force-base override, API args, return values, and shadow fire/skip logic
+- **`pipeline/retrain_trigger.py`** — cron-friendly retrain loop
+  - Counts new labeled examples since `last_trained_at` in `model_registry`
+  - If count ≥ threshold: runs export → fine-tune → shadow eval → promote/reject
+  - Promotes by overwriting `.ft_model_id`; rejection keeps the old model untouched
+  - `--dry-run` prints the plan without running anything
+  - CLI: `python -m pipeline.retrain_trigger --db runs.db --threshold 100`
+- **`tests/test_retrain_trigger.py`** — 25-test pytest suite covering example counting, timestamp queries, dry-run output, below-threshold early exit, promotion path (file written, message printed), rejection path (old file preserved), and CLI
 
 ---
 
@@ -72,6 +85,9 @@ pipeline/shadow_eval.shadow_predict() — calls ft model, inserts shadow_eval ro
     ↓
 pipeline/shadow_eval --report — win_rate_report(), exits 0 if ft_win_pct ≥ 70%
     ↓ ft_win_pct written to model_registry on promotion
+    ↓
+field_mapper.py — auto-selects ft model if .ft_model_id exists, fires shadow in background
+    ↓ pipeline/retrain_trigger.py checks for 100 new examples → reruns loop
 ```
 
 ### Setup
@@ -163,8 +179,51 @@ python -m pipeline.shadow_eval --report --db runs.db
 # exits 0 if ft_win_pct ≥ 70%, exits 1 otherwise
 ```
 
+### Field Mapping
+
+```python
+from field_mapper import map_field
+
+result = map_field(
+    field_label="Email",
+    resume_json='{"email": "jane@example.com"}',
+    platform="greenhouse",
+    db_path="runs.db",
+)
+# result = {"value": "jane@example.com", "model_id": "ft:...", "model_source": "ft"}
+
+# Force base model for debugging
+result = map_field(..., force_base=True)
+```
+
+### Retrain Trigger (cron)
+
+```bash
+# Dry-run: see if enough new data exists
+python -m pipeline.retrain_trigger --db runs.db --threshold 100 --dry-run
+# [DRY RUN] Found 112 new labeled examples since 2026-05-10T14:22:00
+# [DRY RUN] Would export data → fine-tune → evaluate → conditionally promote
+
+# Run for real
+python -m pipeline.retrain_trigger --db runs.db --threshold 100
+```
+
+Add to crontab to run nightly:
+```
+0 2 * * * cd /path/to/ats-agent && python -m pipeline.retrain_trigger --db runs.db --threshold 100
+```
+
+### Estimated API Costs
+
+| Operation | Cost |
+|---|---|
+| Fine-tune training run (~60 examples) | ~$0.03 |
+| Per field fill (ft model inference) | ~$0.0001 |
+| Per job application (15 fields + shadow) | ~$0.003 |
+| 100 applications/month | ~$0.33 |
+
 ### Running Tests
 
 ```bash
-python3 -m pytest -v   # 133 tests
+python3 -m pytest -v   # 175 tests
 ```
