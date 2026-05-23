@@ -25,6 +25,14 @@ An agentic browser automation tool that fills job application forms across **Wor
   - `record_shadow_choice()` writes the human's pick back to `shadow_eval`
   - All DB writes parameterised on `db_path` — nothing hardcoded
 - **`tests/test_human_in_loop.py`** — 21-test pytest suite covering all DB helpers, both prompt modes, and edge cases (invalid choice loops, empty custom value loops)
+- **`pipeline/export_training_data.py`** — exports labeled `run_events` rows as OpenAI fine-tuning JSONL
+  - Filters for rows with `is_correct IS NOT NULL`, `resume_snapshot IS NOT NULL`, and a ground truth value
+  - Ground truth: `corrected_value` when set, otherwise `value_used`
+  - 90/10 train/val split, shuffled with `random.seed(42)` for reproducibility
+  - Prints dataset summary: total, split counts, platform breakdown, most common fields, skipped count
+  - Refuses to write files if fewer than 50 labeled examples exist (prints `WARNING` and exits 1)
+  - CLI: `python -m pipeline.export_training_data --db runs.db --out data/`
+- **`tests/test_export_training_data.py`** — 30-test pytest suite covering output files, JSONL format, ground truth selection, reproducibility, threshold guard, and CLI
 
 ---
 
@@ -36,6 +44,9 @@ The `db/` module is the data layer for a fine-tuning loop that turns human corre
 run_events (field fills)
     ↓ human_in_loop.review_field() — accept / correct / choose ft answer
     ↓ writes is_correct, corrected_value, rejection_reason
+    ↓
+pipeline/export_training_data.py — exports train.jsonl + val.jsonl
+    ↓ 90/10 split, OpenAI chat format, ground truth = corrected_value ?? value_used
     ↓
 fine-tune job (model_registry tracks versions)
     ↓
@@ -91,8 +102,21 @@ value = review_field(event_id=1, field_label="Salary expectation",
                      ft_answer="$130,000")
 ```
 
+### Exporting Training Data
+
+```bash
+python -m pipeline.export_training_data --db runs.db --out data/
+# Total examples : 120
+# Train          : 108  |  Val: 12
+# Platform breakdown: {'workday': 40, 'greenhouse': 35, ...}
+# Most common fields: [('Email', 20), ...]
+# Skipped (missing resume_snapshot): 3
+```
+
+Outputs `data/train.jsonl` and `data/val.jsonl` in OpenAI fine-tuning format.
+
 ### Running Tests
 
 ```bash
-python3 -m pytest -v   # 45 tests
+python3 -m pytest -v   # 75 tests
 ```
