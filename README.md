@@ -18,6 +18,13 @@ An agentic browser automation tool that fills job application forms across **Wor
 - **`tests/test_schema.py`** — 24-test pytest suite covering column migration, table creation, idempotency, summary return values, and CLI behaviour
 - **`pytest.ini`** — pytest configured with `testpaths = tests`
 - **`.gitignore`** — excludes `__pycache__`, `.venv`, `.env`, `logs/`, `models/`, `dist/`
+- **`human_in_loop.py`** — human review module for low-confidence field fills
+  - Two-way prompt (accept / override) when no fine-tuned answer is available
+  - Three-way `[A/F/C]` menu when a `ft_answer` is passed — auto-suggested, fine-tuned, or custom
+  - Writes `is_correct`, `corrected_value`, `rejection_reason` back to `run_events`
+  - `record_shadow_choice()` writes the human's pick back to `shadow_eval`
+  - All DB writes parameterised on `db_path` — nothing hardcoded
+- **`tests/test_human_in_loop.py`** — 21-test pytest suite covering all DB helpers, both prompt modes, and edge cases (invalid choice loops, empty custom value loops)
 
 ---
 
@@ -27,11 +34,13 @@ The `db/` module is the data layer for a fine-tuning loop that turns human corre
 
 ```
 run_events (field fills)
-    ↓ human reviews is_correct / corrected_value
+    ↓ human_in_loop.review_field() — accept / correct / choose ft answer
+    ↓ writes is_correct, corrected_value, rejection_reason
     ↓
 fine-tune job (model_registry tracks versions)
     ↓
 shadow_eval (base vs. fine-tuned answer, human picks winner)
+    ↓ record_shadow_choice() writes human_chose
     ↓
 ft_win_pct tracked in model_registry
 ```
@@ -67,8 +76,23 @@ CREATE TABLE model_registry (
 );
 ```
 
+### Human-in-the-Loop Review
+
+```python
+from human_in_loop import review_field
+
+# Two-way: accept or type a correction
+value = review_field(event_id=1, field_label="Salary expectation",
+                     suggested_value="$120,000", db_path="runs.db")
+
+# Three-way: also show a fine-tuned model answer
+value = review_field(event_id=1, field_label="Salary expectation",
+                     suggested_value="$120,000", db_path="runs.db",
+                     ft_answer="$130,000")
+```
+
 ### Running Tests
 
 ```bash
-python3 -m pytest -v
+python3 -m pytest -v   # 45 tests
 ```
