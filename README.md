@@ -42,6 +42,13 @@ An agentic browser automation tool that fills job application forms across **Wor
   - `--dry-run` validates files and prints the plan without touching the API
   - CLI: `python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db`
 - **`tests/test_finetune_openai.py`** — 27-test pytest suite with fully mocked OpenAI client covering file upload, job creation, success/failure paths, DB writes, and CLI
+- **`pipeline/shadow_eval.py`** — runs the fine-tuned model alongside the base agent and tracks human preference
+  - `read_model_id()` — reads model ID from `.ft_model_id`, raises on missing/empty
+  - `shadow_predict(field_label, resume_json, platform, db_path)` — calls fine-tuned model at `temperature=0`, inserts row into `shadow_eval`, returns `(ft_answer, shadow_id)`
+  - `win_rate_report(db_path)` — queries reviewed rows, classifies ft-win/base-win/custom, prints platform breakdown table, returns stats dict
+  - `--report` CLI exits 0 if `ft_win_pct ≥ 70%` (CI-gate ready), exits 1 otherwise
+  - CLI: `python -m pipeline.shadow_eval --report --db runs.db`
+- **`tests/test_shadow_eval.py`** — 31-test pytest suite covering model ID reading, prediction (DB insert, API args, whitespace stripping), win-rate stats, promote threshold, and CLI exit codes
 
 ---
 
@@ -60,10 +67,11 @@ pipeline/export_training_data.py — exports train.jsonl + val.jsonl
 pipeline/finetune_openai.py — uploads files, starts job, polls to completion
     ↓ writes model_id + train_examples to model_registry, saves .ft_model_id
     ↓
-shadow_eval (base vs. fine-tuned answer, human picks winner)
-    ↓ record_shadow_choice() writes human_chose
+pipeline/shadow_eval.shadow_predict() — calls ft model, inserts shadow_eval row
+    ↓ human reviews via human_in_loop [A/F/C], record_shadow_choice() writes human_chose
     ↓
-ft_win_pct tracked in model_registry
+pipeline/shadow_eval --report — win_rate_report(), exits 0 if ft_win_pct ≥ 70%
+    ↓ ft_win_pct written to model_registry on promotion
 ```
 
 ### Setup
@@ -139,8 +147,24 @@ python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl
 python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db
 ```
 
+### Shadow Evaluation Report
+
+```bash
+python -m pipeline.shadow_eval --report --db runs.db
+# ┌─────────────────────────────────┐
+# │ Shadow Evaluation Report        │
+# ├──────────────────┬──────────────┤
+# │ Total reviewed   │ 52           │
+# │ FT model wins    │ 38 (73.1%)   │
+# │ Base model wins  │ 10 (19.2%)   │
+# │ Human custom     │ 4  (7.7%)    │
+# │ Ready to promote?│ ✓ YES        │
+# └──────────────────┴──────────────┘
+# exits 0 if ft_win_pct ≥ 70%, exits 1 otherwise
+```
+
 ### Running Tests
 
 ```bash
-python3 -m pytest -v   # 102 tests
+python3 -m pytest -v   # 133 tests
 ```
