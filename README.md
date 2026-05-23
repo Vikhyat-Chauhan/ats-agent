@@ -33,6 +33,15 @@ An agentic browser automation tool that fills job application forms across **Wor
   - Refuses to write files if fewer than 50 labeled examples exist (prints `WARNING` and exits 1)
   - CLI: `python -m pipeline.export_training_data --db runs.db --out data/`
 - **`tests/test_export_training_data.py`** — 30-test pytest suite covering output files, JSONL format, ground truth selection, reproducibility, threshold guard, and CLI
+- **`pipeline/finetune_openai.py`** — uploads JSONL files and runs an OpenAI fine-tuning job
+  - Uploads `train.jsonl` and `val.jsonl` to the Files API (`purpose="fine-tune"`)
+  - Creates a fine-tune job on `gpt-4o-mini-2024-07-18`, 3 epochs, suffix `job-agent`
+  - Polls every 30s, printing status and new job events as they arrive
+  - On success: writes model ID to `model_registry` and `.ft_model_id`
+  - On failure/cancellation: raises `RuntimeError` with error detail
+  - `--dry-run` validates files and prints the plan without touching the API
+  - CLI: `python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db`
+- **`tests/test_finetune_openai.py`** — 27-test pytest suite with fully mocked OpenAI client covering file upload, job creation, success/failure paths, DB writes, and CLI
 
 ---
 
@@ -48,7 +57,8 @@ run_events (field fills)
 pipeline/export_training_data.py — exports train.jsonl + val.jsonl
     ↓ 90/10 split, OpenAI chat format, ground truth = corrected_value ?? value_used
     ↓
-fine-tune job (model_registry tracks versions)
+pipeline/finetune_openai.py — uploads files, starts job, polls to completion
+    ↓ writes model_id + train_examples to model_registry, saves .ft_model_id
     ↓
 shadow_eval (base vs. fine-tuned answer, human picks winner)
     ↓ record_shadow_choice() writes human_chose
@@ -115,8 +125,22 @@ python -m pipeline.export_training_data --db runs.db --out data/
 
 Outputs `data/train.jsonl` and `data/val.jsonl` in OpenAI fine-tuning format.
 
+### Running a Fine-Tune Job
+
+```bash
+# Validate files without submitting
+python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db --dry-run
+# [DRY RUN] Would upload: data/train.jsonl (54 examples)
+# [DRY RUN] Would upload: data/val.jsonl (6 examples)
+# [DRY RUN] Would start fine-tune job on gpt-4o-mini-2024-07-18 for 3 epochs
+# [DRY RUN] Would write model ID to .ft_model_id and model_registry
+
+# Run for real (requires OPENAI_API_KEY)
+python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db
+```
+
 ### Running Tests
 
 ```bash
-python3 -m pytest -v   # 75 tests
+python3 -m pytest -v   # 102 tests
 ```
