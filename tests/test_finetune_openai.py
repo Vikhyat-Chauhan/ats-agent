@@ -40,6 +40,12 @@ def _write_jsonl(path: Path, n: int) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def _isolate_ft_model_id_file(tmp_path: Path, monkeypatch):
+    """Redirect all writes to .ft_model_id into a temp directory so tests never touch the real file."""
+    monkeypatch.setattr("pipeline.finetune_openai.FT_MODEL_ID_FILE", str(tmp_path / ".ft_model_id"))
+
+
 @pytest.fixture()
 def jsonl_files(tmp_path: Path):
     train = _write_jsonl(tmp_path / "train.jsonl", 54)
@@ -213,17 +219,16 @@ class TestSuccessPath:
             result = run_finetune(str(train), str(val), str(db), client=client)
         assert result == self.MODEL_ID
 
-    def test_writes_model_id_to_file(self, jsonl_files, db, tmp_path, monkeypatch):
+    def test_writes_model_id_to_file(self, jsonl_files, db):
+        import pipeline.finetune_openai as ft_mod
         train, val = jsonl_files
-        monkeypatch.chdir(tmp_path)
         client = _make_client(model_id=self.MODEL_ID)
         with patch("pipeline.finetune_openai.time.sleep"):
             run_finetune(str(train), str(val), str(db), client=client)
-        assert Path(FT_MODEL_ID_FILE).read_text() == self.MODEL_ID
+        assert Path(ft_mod.FT_MODEL_ID_FILE).read_text() == self.MODEL_ID
 
-    def test_writes_model_registry_row(self, jsonl_files, db, tmp_path, monkeypatch):
+    def test_writes_model_registry_row(self, jsonl_files, db):
         train, val = jsonl_files
-        monkeypatch.chdir(tmp_path)
         client = _make_client(model_id=self.MODEL_ID)
         with patch("pipeline.finetune_openai.time.sleep"):
             run_finetune(str(train), str(val), str(db), client=client)
@@ -235,9 +240,8 @@ class TestSuccessPath:
         assert row[0] == self.MODEL_ID
         assert row[1] == 54  # lines in train.jsonl
 
-    def test_model_registry_last_trained_at_set(self, jsonl_files, db, tmp_path, monkeypatch):
+    def test_model_registry_last_trained_at_set(self, jsonl_files, db):
         train, val = jsonl_files
-        monkeypatch.chdir(tmp_path)
         client = _make_client(model_id=self.MODEL_ID)
         with patch("pipeline.finetune_openai.time.sleep"):
             run_finetune(str(train), str(val), str(db), client=client)
@@ -252,9 +256,8 @@ class TestSuccessPath:
 # ---------------------------------------------------------------------------
 
 class TestFailurePath:
-    def test_raises_runtime_error_on_failed_job(self, jsonl_files, db, tmp_path, monkeypatch):
+    def test_raises_runtime_error_on_failed_job(self, jsonl_files, db):
         train, val = jsonl_files
-        monkeypatch.chdir(tmp_path)
         client = _make_client(status="failed", model_id=None)
         # Replace side_effect list so we can attach an error object to the terminal job
         running_job  = SimpleNamespace(id="ftjob-001", status="running",  fine_tuned_model=None, error=None)
@@ -265,9 +268,8 @@ class TestFailurePath:
             with pytest.raises(RuntimeError, match="failed"):
                 run_finetune(str(train), str(val), str(db), client=client)
 
-    def test_no_model_registry_row_on_failure(self, jsonl_files, db, tmp_path, monkeypatch):
+    def test_no_model_registry_row_on_failure(self, jsonl_files, db):
         train, val = jsonl_files
-        monkeypatch.chdir(tmp_path)
         client = _make_client(status="failed", model_id=None)
         with patch("pipeline.finetune_openai.time.sleep"):
             with pytest.raises(RuntimeError):
@@ -277,9 +279,8 @@ class TestFailurePath:
         conn.close()
         assert count == 0
 
-    def test_raises_runtime_error_on_cancelled_job(self, jsonl_files, db, tmp_path, monkeypatch):
+    def test_raises_runtime_error_on_cancelled_job(self, jsonl_files, db):
         train, val = jsonl_files
-        monkeypatch.chdir(tmp_path)
         client = _make_client(status="cancelled", model_id=None)
         with patch("pipeline.finetune_openai.time.sleep"):
             with pytest.raises(RuntimeError, match="cancelled"):

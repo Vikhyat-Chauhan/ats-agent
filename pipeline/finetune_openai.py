@@ -13,8 +13,11 @@ import time
 from pathlib import Path
 
 import openai
+from dotenv import load_dotenv
 
-BASE_MODEL = "gpt-4o-mini-2024-07-18"
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
+
+BASE_MODEL = "gpt-4.1-mini-2025-04-14"
 N_EPOCHS = 3
 SUFFIX = "job-agent"
 POLL_INTERVAL = 30
