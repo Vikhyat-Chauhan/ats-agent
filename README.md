@@ -1,73 +1,30 @@
 # ats-agent
 
-An agentic browser automation tool that fills job application forms across **Workday, iCIMS, Greenhouse, and Lever** — using your tailored resume JSON as the data source.
+> An agentic browser-automation tool that fills job-application forms across **Workday, iCIMS, Greenhouse, and Lever** from your tailored résumé JSON — with a human-in-the-loop review step and a **self-improving fine-tuning loop** that learns from your corrections over time.
+
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-agent-1C3C3C)
+![Browser Use](https://img.shields.io/badge/Browser_Use-automation-6E56CF)
+![Playwright](https://img.shields.io/badge/Playwright-driver-2EAD33?logo=playwright&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-fine--tune-412991?logo=openai&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-175_tests-0A9EDC?logo=pytest&logoColor=white)
 
 ---
 
-## Changelog
+## What it does
 
-### [Unreleased]
-
-#### Added
-- **`db/schema.py`** — idempotent SQLite migration module for the fine-tuning pipeline
-  - Adds four review columns to `run_events`: `is_correct`, `corrected_value`, `rejection_reason`, `resume_snapshot`
-  - Creates `shadow_eval` table for base-vs-fine-tuned answer comparison
-  - Creates `model_registry` table for tracking trained model versions
-  - `migrate(db_path)` is safe to call repeatedly — skips already-present columns and tables
-  - CLI: `python -m db.schema --db runs.db` prints a summary of what changed
-- **`tests/test_schema.py`** — 24-test pytest suite covering column migration, table creation, idempotency, summary return values, and CLI behaviour
-- **`pytest.ini`** — pytest configured with `testpaths = tests`
-- **`.gitignore`** — excludes `__pycache__`, `.venv`, `.env`, `logs/`, `models/`, `dist/`
-- **`human_in_loop.py`** — human review module for low-confidence field fills
-  - Two-way prompt (accept / override) when no fine-tuned answer is available
-  - Three-way `[A/F/C]` menu when a `ft_answer` is passed — auto-suggested, fine-tuned, or custom
-  - Writes `is_correct`, `corrected_value`, `rejection_reason` back to `run_events`
-  - `record_shadow_choice()` writes the human's pick back to `shadow_eval`
-  - All DB writes parameterised on `db_path` — nothing hardcoded
-- **`tests/test_human_in_loop.py`** — 21-test pytest suite covering all DB helpers, both prompt modes, and edge cases (invalid choice loops, empty custom value loops)
-- **`pipeline/export_training_data.py`** — exports labeled `run_events` rows as OpenAI fine-tuning JSONL
-  - Filters for rows with `is_correct IS NOT NULL`, `resume_snapshot IS NOT NULL`, and a ground truth value
-  - Ground truth: `corrected_value` when set, otherwise `value_used`
-  - 90/10 train/val split, shuffled with `random.seed(42)` for reproducibility
-  - Prints dataset summary: total, split counts, platform breakdown, most common fields, skipped count
-  - Refuses to write files if fewer than 50 labeled examples exist (prints `WARNING` and exits 1)
-  - CLI: `python -m pipeline.export_training_data --db runs.db --out data/`
-- **`tests/test_export_training_data.py`** — 30-test pytest suite covering output files, JSONL format, ground truth selection, reproducibility, threshold guard, and CLI
-- **`pipeline/finetune_openai.py`** — uploads JSONL files and runs an OpenAI fine-tuning job
-  - Uploads `train.jsonl` and `val.jsonl` to the Files API (`purpose="fine-tune"`)
-  - Creates a fine-tune job on `gpt-4o-mini-2024-07-18`, 3 epochs, suffix `job-agent`
-  - Polls every 30s, printing status and new job events as they arrive
-  - On success: writes model ID to `model_registry` and `.ft_model_id`
-  - On failure/cancellation: raises `RuntimeError` with error detail
-  - `--dry-run` validates files and prints the plan without touching the API
-  - CLI: `python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db`
-- **`tests/test_finetune_openai.py`** — 27-test pytest suite with fully mocked OpenAI client covering file upload, job creation, success/failure paths, DB writes, and CLI
-- **`pipeline/shadow_eval.py`** — runs the fine-tuned model alongside the base agent and tracks human preference
-  - `read_model_id()` — reads model ID from `.ft_model_id`, raises on missing/empty
-  - `shadow_predict(field_label, resume_json, platform, db_path)` — calls fine-tuned model at `temperature=0`, inserts row into `shadow_eval`, returns `(ft_answer, shadow_id)`
-  - `win_rate_report(db_path)` — queries reviewed rows, classifies ft-win/base-win/custom, prints platform breakdown table, returns stats dict
-  - `--report` CLI exits 0 if `ft_win_pct ≥ 70%` (CI-gate ready), exits 1 otherwise
-  - CLI: `python -m pipeline.shadow_eval --report --db runs.db`
-- **`tests/test_shadow_eval.py`** — 31-test pytest suite covering model ID reading, prediction (DB insert, API args, whitespace stripping), win-rate stats, promote threshold, and CLI exit codes
-- **`field_mapper.py`** — maps form fields to values using the active model
-  - Reads `.ft_model_id` on startup; uses fine-tuned model (`model_source="ft"`) if present, base model otherwise (`model_source="base"`)
-  - `--force-base` flag overrides to base model for debugging
-  - Fires `shadow_predict()` in a background thread (fire-and-forget) when the ft model is active, so shadow eval accumulates data without blocking fills
-  - Reads `OPENAI_API_KEY` from `.env` via `python-dotenv`
-- **`tests/test_field_mapper.py`** — 17-test pytest suite covering model selection, force-base override, API args, return values, and shadow fire/skip logic
-- **`pipeline/retrain_trigger.py`** — cron-friendly retrain loop
-  - Counts new labeled examples since `last_trained_at` in `model_registry`
-  - If count ≥ threshold: runs export → fine-tune → shadow eval → promote/reject
-  - Promotes by overwriting `.ft_model_id`; rejection keeps the old model untouched
-  - `--dry-run` prints the plan without running anything
-  - CLI: `python -m pipeline.retrain_trigger --db runs.db --threshold 100`
-- **`tests/test_retrain_trigger.py`** — 25-test pytest suite covering example counting, timestamp queries, dry-run output, below-threshold early exit, promotion path (file written, message printed), rejection path (old file preserved), and CLI
+- **Multi-ATS form filling** — drives **Workday, iCIMS, Greenhouse, and Lever** through Browser Use + Playwright, orchestrated as a LangGraph agent.
+- **Résumé as the data source** — reads a structured résumé JSON and maps each form field to the right value.
+- **Human-in-the-loop review** — low-confidence fills pause for an `accept / correct / choose` menu; every correction is logged as training signal instead of being thrown away.
+- **Self-improving** — logged corrections export to an OpenAI fine-tuning job; a **shadow-evaluation gate** promotes the fine-tuned model *only* when it beats the base model on ≥ 70% of human-reviewed fields.
+- **Cheap to run** — ~**$0.003 per application**, ~**$0.33 per 100 applications** (see cost table below).
+- **Tested** — **175 pytest cases** across the migration, review, export, fine-tune, shadow-eval, and retrain modules.
 
 ---
 
-## Fine-Tuning Pipeline
+## Self-improving fine-tuning loop
 
-The `db/` module is the data layer for a fine-tuning loop that turns human corrections into training signal:
+The form-filler is wrapped in a feedback loop that turns human corrections into a continuously-retrained model:
 
 ```
 run_events (field fills)
@@ -90,18 +47,93 @@ field_mapper.py — auto-selects ft model if .ft_model_id exists, fires shadow i
     ↓ pipeline/retrain_trigger.py checks for 100 new examples → reruns loop
 ```
 
-### Setup
+---
+
+## Quick start
 
 ```bash
+# 1. Initialise the data layer (idempotent — safe to re-run)
 python -m db.schema --db runs.db
+
+# 2. Fill forms with human review on low-confidence fields (field_mapper / agent entrypoints)
+#    Corrections are written back to runs.db as training signal.
+
+# 3. Once you have ≥ 50 labeled examples, export and fine-tune
+python -m pipeline.export_training_data --db runs.db --out data/
+python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db
+
+# 4. Check whether the fine-tuned model is good enough to promote
+python -m pipeline.shadow_eval --report --db runs.db   # exits 0 if ft wins ≥ 70%
 ```
 
-Re-running is safe — already-present columns and tables are skipped.
+Requires `OPENAI_API_KEY` in `.env` (loaded via `python-dotenv`).
 
-### Schema
+---
+
+## Pipeline reference
+
+### Human-in-the-loop review
+
+```python
+from human_in_loop import review_field
+
+# Two-way: accept the suggestion or type a correction
+value = review_field(event_id=1, field_label="Salary expectation",
+                     suggested_value="$120,000", db_path="runs.db")
+
+# Three-way: also show a fine-tuned model answer (A = auto / F = fine-tuned / C = custom)
+value = review_field(event_id=1, field_label="Salary expectation",
+                     suggested_value="$120,000", db_path="runs.db",
+                     ft_answer="$130,000")
+```
+
+### Export training data
+
+```bash
+python -m pipeline.export_training_data --db runs.db --out data/
+# Total examples : 120  | Train: 108  Val: 12
+# Platform breakdown: {'workday': 40, 'greenhouse': 35, ...}
+```
+
+Outputs `data/train.jsonl` and `data/val.jsonl` in OpenAI fine-tuning format. Refuses to write if fewer than 50 labeled examples exist.
+
+### Run a fine-tune job
+
+```bash
+# Validate without submitting
+python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db --dry-run
+# Run for real (gpt-4o-mini, 3 epochs)
+python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db
+```
+
+### Shadow-evaluation report
+
+```bash
+python -m pipeline.shadow_eval --report --db runs.db
+# ┌─────────────────────────────────┐
+# │ Shadow Evaluation Report        │
+# ├──────────────────┬──────────────┤
+# │ Total reviewed   │ 52           │
+# │ FT model wins    │ 38 (73.1%)   │
+# │ Base model wins  │ 10 (19.2%)   │
+# │ Human custom     │ 4  (7.7%)    │
+# │ Ready to promote?│ ✓ YES        │
+# └──────────────────┴──────────────┘
+# exits 0 if ft_win_pct ≥ 70%, exits 1 otherwise
+```
+
+### Retrain trigger (cron)
+
+```bash
+python -m pipeline.retrain_trigger --db runs.db --threshold 100
+# Add to crontab to run nightly:
+# 0 2 * * * cd /path/to/ats-agent && python -m pipeline.retrain_trigger --db runs.db --threshold 100
+```
+
+### Data model
 
 ```sql
--- Existing table, new review columns added by migration
+-- Review columns added to the existing run_events table by db/schema.py
 ALTER TABLE run_events ADD COLUMN is_correct       INTEGER DEFAULT NULL;
 ALTER TABLE run_events ADD COLUMN corrected_value  TEXT DEFAULT NULL;
 ALTER TABLE run_events ADD COLUMN rejection_reason TEXT DEFAULT NULL;
@@ -121,109 +153,37 @@ CREATE TABLE model_registry (
 );
 ```
 
-### Human-in-the-Loop Review
+---
 
-```python
-from human_in_loop import review_field
-
-# Two-way: accept or type a correction
-value = review_field(event_id=1, field_label="Salary expectation",
-                     suggested_value="$120,000", db_path="runs.db")
-
-# Three-way: also show a fine-tuned model answer
-value = review_field(event_id=1, field_label="Salary expectation",
-                     suggested_value="$120,000", db_path="runs.db",
-                     ft_answer="$130,000")
-```
-
-### Exporting Training Data
-
-```bash
-python -m pipeline.export_training_data --db runs.db --out data/
-# Total examples : 120
-# Train          : 108  |  Val: 12
-# Platform breakdown: {'workday': 40, 'greenhouse': 35, ...}
-# Most common fields: [('Email', 20), ...]
-# Skipped (missing resume_snapshot): 3
-```
-
-Outputs `data/train.jsonl` and `data/val.jsonl` in OpenAI fine-tuning format.
-
-### Running a Fine-Tune Job
-
-```bash
-# Validate files without submitting
-python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db --dry-run
-# [DRY RUN] Would upload: data/train.jsonl (54 examples)
-# [DRY RUN] Would upload: data/val.jsonl (6 examples)
-# [DRY RUN] Would start fine-tune job on gpt-4o-mini-2024-07-18 for 3 epochs
-# [DRY RUN] Would write model ID to .ft_model_id and model_registry
-
-# Run for real (requires OPENAI_API_KEY)
-python -m pipeline.finetune_openai --train data/train.jsonl --val data/val.jsonl --db runs.db
-```
-
-### Shadow Evaluation Report
-
-```bash
-python -m pipeline.shadow_eval --report --db runs.db
-# ┌─────────────────────────────────┐
-# │ Shadow Evaluation Report        │
-# ├──────────────────┬──────────────┤
-# │ Total reviewed   │ 52           │
-# │ FT model wins    │ 38 (73.1%)   │
-# │ Base model wins  │ 10 (19.2%)   │
-# │ Human custom     │ 4  (7.7%)    │
-# │ Ready to promote?│ ✓ YES        │
-# └──────────────────┴──────────────┘
-# exits 0 if ft_win_pct ≥ 70%, exits 1 otherwise
-```
-
-### Field Mapping
-
-```python
-from field_mapper import map_field
-
-result = map_field(
-    field_label="Email",
-    resume_json='{"email": "jane@example.com"}',
-    platform="greenhouse",
-    db_path="runs.db",
-)
-# result = {"value": "jane@example.com", "model_id": "ft:...", "model_source": "ft"}
-
-# Force base model for debugging
-result = map_field(..., force_base=True)
-```
-
-### Retrain Trigger (cron)
-
-```bash
-# Dry-run: see if enough new data exists
-python -m pipeline.retrain_trigger --db runs.db --threshold 100 --dry-run
-# [DRY RUN] Found 112 new labeled examples since 2026-05-10T14:22:00
-# [DRY RUN] Would export data → fine-tune → evaluate → conditionally promote
-
-# Run for real
-python -m pipeline.retrain_trigger --db runs.db --threshold 100
-```
-
-Add to crontab to run nightly:
-```
-0 2 * * * cd /path/to/ats-agent && python -m pipeline.retrain_trigger --db runs.db --threshold 100
-```
-
-### Estimated API Costs
+## Estimated API costs
 
 | Operation | Cost |
 |---|---|
 | Fine-tune training run (~60 examples) | ~$0.03 |
 | Per field fill (ft model inference) | ~$0.0001 |
 | Per job application (15 fields + shadow) | ~$0.003 |
-| 100 applications/month | ~$0.33 |
+| 100 applications / month | ~$0.33 |
 
-### Running Tests
+---
+
+## Running tests
 
 ```bash
 python3 -m pytest -v   # 175 tests
 ```
+
+---
+
+## Changelog
+
+### [Unreleased]
+
+**Added**
+- `db/schema.py` — idempotent SQLite migration module (adds four review columns to `run_events`; creates `shadow_eval` and `model_registry` tables; safe to re-run).
+- `human_in_loop.py` — accept / correct / `[A/F/C]` review for low-confidence fills; writes labels back to `run_events` and `shadow_eval`.
+- `pipeline/export_training_data.py` — exports labeled rows as OpenAI fine-tuning JSONL (90/10 split, seeded; refuses < 50 examples).
+- `pipeline/finetune_openai.py` — uploads JSONL, runs a `gpt-4o-mini` fine-tune job, polls to completion, registers the model (`--dry-run` supported).
+- `pipeline/shadow_eval.py` — runs the fine-tuned model alongside the base agent and reports win rate (`--report` exits 0 at ≥ 70%).
+- `field_mapper.py` — auto-selects the fine-tuned model when present, fires shadow predictions in the background (`--force-base` to override).
+- `pipeline/retrain_trigger.py` — cron-friendly loop: export → fine-tune → evaluate → conditionally promote.
+- Test suites for every module above (**175 tests total**), plus `pytest.ini` and `.gitignore`.
